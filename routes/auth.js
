@@ -1,0 +1,110 @@
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const pool = require('../db/connection');
+const router = express.Router();
+
+// تسجيل متجر جديد
+router.post('/register', async (req, res) => {
+  try {
+    const { store_name, email, password, phone } = req.body;
+
+    // التحقق من المدخلات
+    if (!store_name || !email || !password) {
+      return res.status(400).json({ error: 'جميع الحقول مطلوبة' });
+    }
+
+    // التحقق من وجود المتجر
+    const existingStore = await pool.query(
+      'SELECT * FROM store_owners WHERE email = $1',
+      [email]
+    );
+
+    if (existingStore.rows.length > 0) {
+      return res.status(409).json({ error: 'البريد الإلكتروني مستخدم بالفعل' });
+    }
+
+    // تشفير كلمة المرور
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // إنشاء متجر جديد
+    const result = await pool.query(
+      'INSERT INTO store_owners (store_name, email, password, phone) VALUES ($1, $2, $3, $4) RETURNING id, store_name, email',
+      [store_name, email, hashedPassword, phone]
+    );
+
+    const store = result.rows[0];
+
+    // إنشاء JWT Token
+    const token = jwt.sign(
+      { id: store.id, email: store.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({
+      message: 'تم إنشاء المتجر بنجاح ✅',
+      token,
+      store: {
+        id: store.id,
+        store_name: store.store_name,
+        email: store.email
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في التسجيل' });
+  }
+});
+
+// تسجيل الدخول
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'البريد الإلكتروني وكلمة المرور مطلوبان' });
+    }
+
+    // البحث عن المتجر
+    const result = await pool.query(
+      'SELECT * FROM store_owners WHERE email = $1',
+      [email]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
+    }
+
+    const store = result.rows[0];
+
+    // التحقق من كلمة المرور
+    const validPassword = await bcrypt.compare(password, store.password);
+
+    if (!validPassword) {
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
+    }
+
+    // إنشاء Token
+    const token = jwt.sign(
+      { id: store.id, email: store.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      message: 'تم تسجيل الدخول بنجاح ✅',
+      token,
+      store: {
+        id: store.id,
+        store_name: store.store_name,
+        email: store.email
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'خطأ في تسجيل الدخول' });
+  }
+});
+
+module.exports = router;
